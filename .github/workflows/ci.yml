@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      
+      - name: Build
+        run: go build -v -o smspit .
+      
+      - name: Test
+        run: go test -v ./...
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Build Docker image
+        run: docker build -t smspit:test .
+      
+      - name: Test container
+        run: |
+          docker run -d --name smspit-test -p 8080:8080 -p 9080:9080 smspit:test
+          sleep 3
+          
+          # Test health endpoint
+          curl -sf http://localhost:8080/api/v1/health | jq .
+          
+          # Test sending SMS
+          curl -sf -X POST http://localhost:9080/send \
+            -H "Content-Type: application/json" \
+            -d '{"to": "+15551234567", "body": "Test message"}' | jq .
+          
+          # Test listing messages
+          curl -sf http://localhost:8080/api/v1/messages | jq .
+          
+          docker stop smspit-test
+          echo "✅ All tests passed"

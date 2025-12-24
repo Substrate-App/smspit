@@ -1,0 +1,142 @@
+name: "@substrate/official/sms-test"
+version: "1.0.0"
+description: "SMSpit - Local SMS testing server for development (the Mailpit of SMS)"
+category: development
+tags:
+  - sms
+  - testing
+  - development
+  - kratos
+  - twilio
+  - verification
+  - otp
+
+author:
+  name: "Substrate Team"
+  email: "team@substrate-platform.com"
+
+# External source configuration
+# This module is developed in an external repository
+source:
+  type: git
+  repository: "https://github.com/substrate-app/smspit"
+  branch: main
+
+# License
+license: MIT
+
+documentation:
+  homepage: "https://github.com/substrate-app/smspit"
+  repository: "https://github.com/substrate-app/smspit"
+  issues: "https://github.com/substrate-app/smspit/issues"
+  
+  summary: |
+    SMSpit is a modern, self-hosted SMS testing server for development.
+    Think "Mailpit for SMS" - capture, view, and test SMS messages without 
+    sending real texts or paying for SMS services.
+  
+  features:
+    - Beautiful web UI with real-time updates (WebSocket)
+    - REST API for integration with any application
+    - Twilio-compatible API mode for drop-in replacement
+    - Persistent storage (SQLite) - messages survive restarts
+    - Full-text search across all messages
+    - Docker and Kubernetes ready
+    - Pre-configured for Kratos/Ory integration
+    - Zero configuration needed
+
+  use_cases:
+    - Local development of SMS features
+    - CI/CD testing pipelines
+    - Demo environments
+    - Security testing and audits
+
+dependencies:
+  required: []
+  optional:
+    "@substrate/official/auth-kratos": "^1.0.0"
+
+installation:
+  methods:
+    docker:
+      description: "Run with Docker (recommended)"
+      command: |
+        docker run -d \
+          -p 8080:8080 \
+          -p 9080:9080 \
+          -v smspit-data:/data \
+          --name smspit \
+          ghcr.io/substrate-app/smspit:latest
+    
+    docker-compose:
+      description: "Run with Docker Compose"
+      command: |
+        curl -O https://raw.githubusercontent.com/substrate-app/smspit/main/deploy/docker-compose.yaml
+        docker-compose up -d
+    
+    kubernetes:
+      description: "Deploy to Kubernetes"
+      command: |
+        kubectl apply -f https://raw.githubusercontent.com/substrate-app/smspit/main/deploy/k8s/smspit.yaml
+    
+    binary:
+      description: "Download binary"
+      command: |
+        # Download latest release for your platform
+        curl -L https://github.com/substrate-app/smspit/releases/latest/download/smspit-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m) -o smspit
+        chmod +x smspit
+        ./smspit
+
+  verification:
+    description: "Verify installation"
+    steps:
+      - "Open http://localhost:8080 in your browser"
+      - "Send a test SMS: curl -X POST http://localhost:9080/send -H 'Content-Type: application/json' -d '{\"to\": \"+15551234567\", \"body\": \"Hello from SMSpit!\"}'"
+      - "See the message appear in the web UI"
+
+configuration:
+  environment_variables:
+    SMSPIT_DB_PATH:
+      description: "SQLite database path"
+      default: "/data/smspit.db"
+    SMSPIT_WEB_PORT:
+      description: "Web UI port"
+      default: "8080"
+    SMSPIT_API_PORT:
+      description: "Webhook API port"
+      default: "9080"
+    SMSPIT_MAX_MESSAGES:
+      description: "Maximum messages to retain"
+      default: "10000"
+    SMSPIT_TWILIO_COMPAT:
+      description: "Enable Twilio API compatibility mode"
+      default: "false"
+    SMSPIT_AUTH_TOKEN:
+      description: "Optional API authentication token"
+      default: ""
+
+integrations:
+  kratos:
+    description: "Configure Ory Kratos to use SMSpit"
+    config: |
+      courier:
+        sms:
+          enabled: true
+          request_config:
+            url: http://smspit:9080/send
+            method: POST
+            body: base64://eyJ0byI6Int7IC50byB9fSIsImJvZHkiOiJ7eyAuYm9keSB9fSJ9
+            # Decoded: {"to":"{{ .to }}","body":"{{ .body }}"}
+
+compatibility:
+  platforms:
+    - linux/amd64
+    - linux/arm64
+    - darwin/amd64
+    - darwin/arm64
+    - windows/amd64
+  orchestrators:
+    - docker
+    - docker-compose
+    - kubernetes
+    - podman

@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMSpit - SMS Testing Server</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        'sms-purple': '#8b5cf6',
+                        'sms-purple-dark': '#7c3aed',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .message-enter { animation: slideIn 0.3s ease-out; }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .pulse-dot {
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+    <div id="app" class="flex flex-col h-screen">
+        <!-- Header -->
+        <header class="bg-gray-800 border-b border-gray-700 px-6 py-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <span class="text-3xl">📱</span>
+                    <div>
+                        <h1 class="text-xl font-bold text-white">SMSpit</h1>
+                        <p class="text-xs text-gray-400">SMS Testing Server</p>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div id="connection-status" class="flex items-center space-x-2 text-sm">
+                        <span class="pulse-dot w-2 h-2 bg-green-500 rounded-full"></span>
+                        <span class="text-gray-400">Connected</span>
+                    </div>
+                    <div id="stats" class="text-sm text-gray-400">
+                        <span id="message-count">0</span> messages
+                    </div>
+                    <button onclick="clearMessages()" class="px-3 py-1.5 bg-red-600 hover:bg-red-700 rounded text-sm font-medium transition-colors">
+                        Clear All
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="flex flex-1 overflow-hidden">
+            <!-- Sidebar - Message List -->
+            <div class="w-96 bg-gray-850 border-r border-gray-700 flex flex-col">
+                <!-- Search -->
+                <div class="p-4 border-b border-gray-700">
+                    <div class="relative">
+                        <input 
+                            type="text" 
+                            id="search-input"
+                            placeholder="Search messages..." 
+                            class="w-full bg-gray-800 border border-gray-600 rounded-lg px-4 py-2 pl-10 text-sm focus:outline-none focus:border-sms-purple"
+                            oninput="filterMessages(this.value)"
+                        >
+                        <svg class="absolute left-3 top-2.5 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                    </div>
+                </div>
+
+                <!-- Message List -->
+                <div id="message-list" class="flex-1 overflow-y-auto">
+                    <div id="empty-state" class="flex flex-col items-center justify-center h-full text-gray-500 p-8">
+                        <span class="text-5xl mb-4">📭</span>
+                        <p class="text-lg font-medium">No messages yet</p>
+                        <p class="text-sm text-center mt-2">Send an SMS to <span class="mono text-sms-purple">localhost:9080/send</span> to see it here</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Message Detail -->
+            <div class="flex-1 flex flex-col bg-gray-900">
+                <div id="message-detail" class="flex-1 flex items-center justify-center text-gray-500">
+                    <div class="text-center">
+                        <span class="text-5xl mb-4 block">👈</span>
+                        <p>Select a message to view details</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let messages = [];
+        let selectedId = null;
+        let ws = null;
+
+        // Connect to WebSocket for real-time updates
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+            
+            ws.onopen = () => {
+                document.getElementById('connection-status').innerHTML = `
+                    <span class="pulse-dot w-2 h-2 bg-green-500 rounded-full"></span>
+                    <span class="text-gray-400">Connected</span>
+                `;
+            };
+            
+            ws.onclose = () => {
+                document.getElementById('connection-status').innerHTML = `
+                    <span class="w-2 h-2 bg-red-500 rounded-full"></span>
+                    <span class="text-gray-400">Disconnected</span>
+                `;
+                // Reconnect after 2 seconds
+                setTimeout(connectWebSocket, 2000);
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === 'new_message') {
+                    messages.unshift(data.message);
+                    renderMessages();
+                    // Flash notification
+                    showNotification(data.message);
+                }
+            };
+        }
+
+        // Load initial messages
+        async function loadMessages() {
+            try {
+                const response = await fetch('/api/v1/messages');
+                const data = await response.json();
+                messages = data.messages || [];
+                renderMessages();
+            } catch (error) {
+                console.error('Failed to load messages:', error);
+            }
+        }
+
+        // Render message list
+        function renderMessages(filter = '') {
+            const list = document.getElementById('message-list');
+            const empty = document.getElementById('empty-state');
+            const count = document.getElementById('message-count');
+            
+            const filtered = filter 
+                ? messages.filter(m => 
+                    m.to.includes(filter) || 
+                    m.body.toLowerCase().includes(filter.toLowerCase())
+                )
+                : messages;
+            
+            count.textContent = messages.length;
+            
+            if (filtered.length === 0) {
+                empty.classList.remove('hidden');
+                list.innerHTML = '';
+                list.appendChild(empty);
+                return;
+            }
+            
+            empty.classList.add('hidden');
+            
+            list.innerHTML = filtered.map(msg => `
+                <div 
+                    class="message-item p-4 border-b border-gray-700 cursor-pointer hover:bg-gray-800 transition-colors ${selectedId === msg.id ? 'bg-gray-800 border-l-2 border-l-sms-purple' : ''}"
+                    onclick="selectMessage('${msg.id}')"
+                >
+                    <div class="flex items-start justify-between mb-1">
+                        <span class="mono text-sm text-sms-purple font-medium">${msg.to}</span>
+                        <span class="text-xs text-gray-500">${formatTime(msg.created_at)}</span>
+                    </div>
+                    <p class="text-sm text-gray-300 line-clamp-2">${escapeHtml(msg.body)}</p>
+                    ${msg.from ? `<p class="text-xs text-gray-500 mt-1">From: ${msg.from}</p>` : ''}
+                </div>
+            `).join('');
+        }
+
+        // Select and show message details
+        function selectMessage(id) {
+            selectedId = id;
+            const msg = messages.find(m => m.id === id);
+            
+            if (!msg) return;
+            
+            document.getElementById('message-detail').innerHTML = `
+                <div class="w-full max-w-2xl p-8">
+                    <div class="bg-gray-800 rounded-xl p-6 shadow-xl">
+                        <!-- Header -->
+                        <div class="flex items-start justify-between mb-6">
+                            <div>
+                                <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">To</p>
+                                <p class="mono text-xl text-sms-purple font-medium">${msg.to}</p>
+                            </div>
+                            <button onclick="deleteMessage('${msg.id}')" class="text-gray-500 hover:text-red-500 transition-colors">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                </svg>
+                            </button>
+                        </div>
+
+                        ${msg.from ? `
+                        <div class="mb-6">
+                            <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">From</p>
+                            <p class="mono text-gray-300">${msg.from}</p>
+                        </div>
+                        ` : ''}
+
+                        <!-- Message Body -->
+                        <div class="mb-6">
+                            <p class="text-xs text-gray-500 uppercase tracking-wide mb-2">Message</p>
+                            <div class="bg-gray-900 rounded-lg p-4">
+                                <p class="text-lg text-white whitespace-pre-wrap">${escapeHtml(msg.body)}</p>
+                            </div>
+                        </div>
+
+                        <!-- Metadata -->
+                        <div class="grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                                <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">ID</p>
+                                <p class="mono text-gray-400">${msg.id}</p>
+                            </div>
+                            <div>
+                                <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Received</p>
+                                <p class="text-gray-400">${new Date(msg.created_at).toLocaleString()}</p>
+                            </div>
+                        </div>
+
+                        ${msg.tags && msg.tags.length > 0 ? `
+                        <div class="mt-4">
+                            <p class="text-xs text-gray-500 uppercase tracking-wide mb-2">Tags</p>
+                            <div class="flex flex-wrap gap-2">
+                                ${msg.tags.map(tag => `
+                                    <span class="px-2 py-1 bg-sms-purple/20 text-sms-purple rounded text-xs">${tag}</span>
+                                `).join('')}
+                            </div>
+                        </div>
+                        ` : ''}
+
+                        <!-- Copy Button -->
+                        <div class="mt-6 pt-4 border-t border-gray-700">
+                            <button 
+                                onclick="copyMessage('${msg.id}')"
+                                class="w-full py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
+                            >
+                                📋 Copy Message Body
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            renderMessages(document.getElementById('search-input').value);
+        }
+
+        // Delete a message
+        async function deleteMessage(id) {
+            if (!confirm('Delete this message?')) return;
+            
+            try {
+                await fetch(`/api/v1/messages/${id}`, { method: 'DELETE' });
+                messages = messages.filter(m => m.id !== id);
+                selectedId = null;
+                renderMessages();
+                document.getElementById('message-detail').innerHTML = `
+                    <div class="text-center text-gray-500">
+                        <span class="text-5xl mb-4 block">👈</span>
+                        <p>Select a message to view details</p>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Failed to delete message:', error);
+            }
+        }
+
+        // Clear all messages
+        async function clearMessages() {
+            if (!confirm('Clear all messages?')) return;
+            
+            try {
+                await fetch('/api/v1/messages', { method: 'DELETE' });
+                messages = [];
+                selectedId = null;
+                renderMessages();
+                document.getElementById('message-detail').innerHTML = `
+                    <div class="text-center text-gray-500">
+                        <span class="text-5xl mb-4 block">👈</span>
+                        <p>Select a message to view details</p>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Failed to clear messages:', error);
+            }
+        }
+
+        // Copy message body
+        function copyMessage(id) {
+            const msg = messages.find(m => m.id === id);
+            if (msg) {
+                navigator.clipboard.writeText(msg.body);
+                // Show toast
+                const toast = document.createElement('div');
+                toast.className = 'fixed bottom-4 right-4 bg-green-600 text-white px-4 py-2 rounded-lg shadow-lg';
+                toast.textContent = 'Copied to clipboard!';
+                document.body.appendChild(toast);
+                setTimeout(() => toast.remove(), 2000);
+            }
+        }
+
+        // Filter messages
+        function filterMessages(query) {
+            renderMessages(query);
+        }
+
+        // Show notification for new message
+        function showNotification(msg) {
+            // Browser notification
+            if (Notification.permission === 'granted') {
+                new Notification('New SMS', {
+                    body: `To: ${msg.to}\n${msg.body.substring(0, 50)}...`,
+                    icon: '📱'
+                });
+            }
+        }
+
+        // Helper functions
+        function formatTime(timestamp) {
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diff = now - date;
+            
+            if (diff < 60000) return 'Just now';
+            if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+            if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+            return date.toLocaleDateString();
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Request notification permission
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+
+        // Initialize
+        connectWebSocket();
+        loadMessages();
+
+        // Refresh messages periodically as fallback
+        setInterval(loadMessages, 30000);
+    </script>
+</body>
+</html>
+

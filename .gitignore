@@ -1,0 +1,25 @@
+# Binaries
+/smspit
+/smspit-*
+*.exe
+
+# Build output
+/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage.out
+coverage.html
+
+# Database (local development)
+*.db
+/data/

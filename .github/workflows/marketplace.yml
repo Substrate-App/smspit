@@ -1,0 +1,92 @@
+name: Publish to Substrate Marketplace
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (leave empty for latest release)'
+        required: false
+
+env:
+  MARKETPLACE_URL: https://market.substrate-platform.com
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Validate module.yaml
+        run: |
+          if [ ! -f module.yaml ]; then
+            echo "❌ module.yaml not found"
+            exit 1
+          fi
+          
+          # Validate YAML syntax
+          python3 -c "import yaml; yaml.safe_load(open('module.yaml'))"
+          echo "✅ module.yaml is valid"
+          
+          # Extract and display module info
+          echo ""
+          echo "📦 Module Info:"
+          grep -E "^(name|version|description):" module.yaml
+      
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          elif [ -n "${{ github.event.release.tag_name }}" ]; then
+            echo "version=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            # Get latest tag
+            VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Publish to Marketplace
+        env:
+          SUBSTRATE_MARKETPLACE_TOKEN: ${{ secrets.SUBSTRATE_MARKETPLACE_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          echo "📤 Publishing version: $VERSION"
+          
+          # If no token, just validate (useful for forks/community)
+          if [ -z "$SUBSTRATE_MARKETPLACE_TOKEN" ]; then
+            echo "⚠️ No SUBSTRATE_MARKETPLACE_TOKEN configured"
+            echo "   Module validated but not published to marketplace"
+            echo "   To publish, add the secret to your repository"
+            exit 0
+          fi
+          
+          # Create registration payload
+          PAYLOAD=$(cat <<EOF
+          {
+            "source": {
+              "type": "git",
+              "repository": "https://github.com/${{ github.repository }}",
+              "ref": "$VERSION"
+            },
+            "module_yaml_url": "https://raw.githubusercontent.com/${{ github.repository }}/$VERSION/module.yaml"
+          }
+          EOF
+          )
+          
+          echo "Payload: $PAYLOAD"
+          
+          # Publish to marketplace
+          RESPONSE=$(curl -sf -X POST \
+            "$MARKETPLACE_URL/api/v1/modules/publish" \
+            -H "Authorization: Bearer $SUBSTRATE_MARKETPLACE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" 2>&1) || {
+              echo "⚠️ Marketplace publish failed (marketplace may not support external modules yet)"
+              echo "Response: $RESPONSE"
+              exit 0  # Don't fail the workflow - marketplace support is coming
+            }
+          
+          echo "✅ Published to Substrate Marketplace"
+          echo "$RESPONSE" | jq . 2>/dev/null || echo "$RESPONSE"
